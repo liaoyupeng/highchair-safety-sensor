@@ -39,7 +39,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 | MP3 Player | DFPlayer Mini | 1 | TF card slot |
 | Speaker | 8Ω 2-3W | 1 | Small speaker |
 | Battery Holder | 4x AA | 1 | 6V output (regulated to 3.3V) |
-| Resistors | 10KΩ | 2 | For battery voltage divider |
+| Resistors | 100KΩ | 2 | For battery voltage divider (low power) |
 | Magnet | Neodymium (small) | 1 | Attach to buckle |
 | Jumper Wires | Dupont F-F | Several | For connections |
 | TF Card | Any | 1 | Store MP3 files |
@@ -81,13 +81,14 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 #### Battery Voltage Monitor / 电池电压监测
 Uses a voltage divider to measure battery voltage:
 ```
-Battery+ (6V) ─── [10KΩ] ───┬─── GPIO0 (ADC)
-                            │
-                         [10KΩ]
-                            │
-Battery- (GND) ─────────────┴─── GND
+Battery+ (6V) ─── [100KΩ] ───┬─── GPIO0 (ADC)
+                             │
+                          [100KΩ]
+                             │
+Battery- (GND) ──────────────┴─── GND
 ```
 This divides voltage by 2, so 6V battery → 3V at ADC (safe for 3.3V input).
+Using 100KΩ resistors keeps the divider current low (~0.03mA) for better battery life.
 
 #### HC-SR04 Ultrasonic Sensor / 超声波传感器
 | HC-SR04 Pin | ESP32 Pin |
