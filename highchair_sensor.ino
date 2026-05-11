@@ -7,12 +7,19 @@
  * - 49E Linear Hall Effect Sensor
  * - DFPlayer Mini + Speaker
  *
+ * Features:
+ * - Deep sleep mode for power saving (wakes every few seconds to check)
+ * - Ultrasonic detection for baby presence
+ * - Hall sensor for buckle status
+ * - Audio reminders via DFPlayer Mini
+ *
  * Author: Yupeng Liao
  * License: MIT
  */
 
 #include <HardwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
+#include "esp_sleep.h"
 
 // ==================== Pin Definitions ====================
 // Ultrasonic Sensor (HC-SR04)
@@ -32,6 +39,11 @@
 #define HALL_THRESHOLD 2000           // ADC value threshold (adjust based on testing)
 #define BUCKLE_REMINDER_DELAY_MS 30000  // 30 seconds
 
+// Sleep configuration
+#define SLEEP_ENABLED true            // Set to false to disable sleep (for debugging)
+#define SLEEP_INTERVAL_US 3000000     // 3 seconds between wake-ups when idle
+#define ACTIVE_CHECK_INTERVAL_MS 100  // Check interval when baby is detected
+
 // Audio track numbers (stored in /01/ folder on TF card)
 #define TRACK_WELCOME 1     // 001.mp3 - Welcome music
 #define TRACK_REMINDER 2    // 002.mp3 - Buckle reminder
@@ -40,22 +52,41 @@
 HardwareSerial dfPlayerSerial(1);  // Use Serial1
 DFRobotDFPlayerMini dfPlayer;
 
-bool babyDetected = false;
-bool buckleLoose = false;
-bool timerStarted = false;
-unsigned long timerStartTime = 0;
-bool welcomePlayed = false;
-bool reminderPlayed = false;
+// Use RTC memory to persist state across deep sleep
+RTC_DATA_ATTR bool babyDetected = false;
+RTC_DATA_ATTR bool timerStarted = false;
+RTC_DATA_ATTR unsigned long timerStartTime = 0;
+RTC_DATA_ATTR bool welcomePlayed = false;
+RTC_DATA_ATTR bool reminderPlayed = false;
+RTC_DATA_ATTR int consecutiveDetections = 0;
+RTC_DATA_ATTR int consecutiveNoDetections = 0;
 
-// Debounce
-unsigned long lastDetectionTime = 0;
-#define DETECTION_DEBOUNCE_MS 1000
+// Debounce thresholds
+#define DETECTION_CONFIRM_COUNT 2     // Need 2 consecutive detections to confirm
+#define NO_DETECTION_CONFIRM_COUNT 3  // Need 3 consecutive no-detections to clear
+
+bool dfPlayerReady = false;
 
 // ==================== Setup ====================
 void setup() {
   // Initialize Serial for debugging
   Serial.begin(115200);
-  Serial.println("High Chair Safety Sensor Starting...");
+
+  // Check wake-up reason
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+    Serial.println("Woke up from timer");
+  } else {
+    Serial.println("High Chair Safety Sensor Starting...");
+    // Fresh boot - reset state
+    babyDetected = false;
+    timerStarted = false;
+    welcomePlayed = false;
+    reminderPlayed = false;
+    consecutiveDetections = 0;
+    consecutiveNoDetections = 0;
+  }
 
   // Initialize pins
   pinMode(TRIG_PIN, OUTPUT);
@@ -63,101 +94,131 @@ void setup() {
   pinMode(HALL_PIN, INPUT);
 
   // Initialize DFPlayer
-  dfPlayerSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
-
-  if (!dfPlayer.begin(dfPlayerSerial)) {
-    Serial.println("DFPlayer Mini not detected!");
-    Serial.println("Please check connections and TF card.");
-    while (true) {
-      delay(1000);  // Halt if DFPlayer not found
-    }
-  }
-
-  Serial.println("DFPlayer Mini initialized.");
-  dfPlayer.volume(25);  // Set volume (0-30)
-
-  delay(1000);
-  Serial.println("System ready!");
+  initDFPlayer();
 }
 
 // ==================== Main Loop ====================
 void loop() {
-  // Read sensors
+  // Read ultrasonic sensor
   float distance = readUltrasonic();
-  int hallValue = analogRead(HALL_PIN);
+  bool currentlyDetected = (distance > 0 && distance < ULTRASONIC_THRESHOLD_CM);
 
-  // Debug output
   Serial.print("Distance: ");
   Serial.print(distance);
-  Serial.print(" cm, Hall: ");
-  Serial.println(hallValue);
+  Serial.print(" cm, Detected: ");
+  Serial.println(currentlyDetected ? "YES" : "NO");
 
-  // Check if baby is sitting (ultrasonic detects feet)
-  bool currentBabyDetected = (distance > 0 && distance < ULTRASONIC_THRESHOLD_CM);
+  // ========== State: No baby detected yet ==========
+  if (!babyDetected) {
+    if (currentlyDetected) {
+      consecutiveDetections++;
+      consecutiveNoDetections = 0;
 
-  // Baby just sat down
-  if (currentBabyDetected && !babyDetected) {
-    if (millis() - lastDetectionTime > DETECTION_DEBOUNCE_MS) {
-      babyDetected = true;
-      welcomePlayed = false;
-      reminderPlayed = false;
-      timerStarted = false;
-      lastDetectionTime = millis();
-      Serial.println("Baby detected! Playing welcome music.");
-      playTrack(TRACK_WELCOME);
-      welcomePlayed = true;
+      if (consecutiveDetections >= DETECTION_CONFIRM_COUNT) {
+        // Confirmed: baby sat down
+        babyDetected = true;
+        welcomePlayed = false;
+        reminderPlayed = false;
+        timerStarted = false;
+        Serial.println("Baby confirmed! Playing welcome music.");
+        playTrack(TRACK_WELCOME);
+        welcomePlayed = true;
+      }
+    } else {
+      consecutiveDetections = 0;
+    }
+
+    // No baby - go to deep sleep to save power
+    if (!babyDetected && SLEEP_ENABLED) {
+      goToSleep();
     }
   }
 
-  // Baby left the chair
-  if (!currentBabyDetected && babyDetected) {
-    if (millis() - lastDetectionTime > DETECTION_DEBOUNCE_MS) {
-      babyDetected = false;
-      timerStarted = false;
-      welcomePlayed = false;
-      reminderPlayed = false;
-      lastDetectionTime = millis();
-      Serial.println("Baby left the chair.");
-    }
-  }
-
-  // Check buckle status (only when baby is sitting)
+  // ========== State: Baby is sitting ==========
   if (babyDetected) {
-    // Hall sensor detects magnet = buckle is loose (not fastened)
-    bool currentBuckleLoose = (hallValue > HALL_THRESHOLD);
+    // Check if baby left
+    if (!currentlyDetected) {
+      consecutiveNoDetections++;
+      consecutiveDetections = 0;
 
-    // Buckle became loose - start timer
-    if (currentBuckleLoose && !timerStarted) {
-      timerStarted = true;
-      timerStartTime = millis();
-      reminderPlayed = false;
-      Serial.println("Buckle loose detected. Starting 30s timer.");
+      if (consecutiveNoDetections >= NO_DETECTION_CONFIRM_COUNT) {
+        // Confirmed: baby left
+        babyDetected = false;
+        timerStarted = false;
+        welcomePlayed = false;
+        reminderPlayed = false;
+        Serial.println("Baby left the chair.");
+
+        // Go back to sleep mode
+        if (SLEEP_ENABLED) {
+          goToSleep();
+        }
+      }
+    } else {
+      consecutiveNoDetections = 0;
     }
 
-    // Buckle fastened - cancel timer
-    if (!currentBuckleLoose && timerStarted) {
-      timerStarted = false;
-      Serial.println("Buckle fastened! Timer cancelled.");
-    }
+    // Check buckle status
+    int hallValue = analogRead(HALL_PIN);
+    bool buckleLoose = (hallValue > HALL_THRESHOLD);
 
-    // Timer expired and buckle still loose - play reminder
-    if (timerStarted && !reminderPlayed) {
-      if (millis() - timerStartTime > BUCKLE_REMINDER_DELAY_MS) {
-        Serial.println("30 seconds passed. Playing buckle reminder.");
-        playTrack(TRACK_REMINDER);
-        reminderPlayed = true;
-        // Reset timer for repeated reminders every 30 seconds
+    Serial.print("Hall: ");
+    Serial.print(hallValue);
+    Serial.print(", Buckle: ");
+    Serial.println(buckleLoose ? "LOOSE" : "FASTENED");
+
+    // Buckle is loose - start or continue timer
+    if (buckleLoose) {
+      if (!timerStarted) {
+        timerStarted = true;
         timerStartTime = millis();
+        reminderPlayed = false;
+        Serial.println("Buckle loose. Starting 30s timer.");
+      }
+
+      // Check if timer expired
+      if (timerStarted && !reminderPlayed) {
+        unsigned long elapsed = millis() - timerStartTime;
+        if (elapsed > BUCKLE_REMINDER_DELAY_MS) {
+          Serial.println("Timer expired. Playing reminder.");
+          playTrack(TRACK_REMINDER);
+          reminderPlayed = true;
+          // Reset for next reminder cycle
+          timerStartTime = millis();
+        }
+      }
+    } else {
+      // Buckle fastened - cancel timer
+      if (timerStarted) {
+        Serial.println("Buckle fastened! Timer cancelled.");
+        timerStarted = false;
+        reminderPlayed = false;
       }
     }
 
-    buckleLoose = currentBuckleLoose;
+    // Stay awake and check frequently while baby is sitting
+    delay(ACTIVE_CHECK_INTERVAL_MS);
   }
-
-  delay(100);  // Small delay between readings
 }
 
 // ==================== Functions ====================
+
+/**
+ * Initialize DFPlayer Mini
+ */
+void initDFPlayer() {
+  dfPlayerSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
+  delay(100);
+
+  if (dfPlayer.begin(dfPlayerSerial)) {
+    Serial.println("DFPlayer ready.");
+    dfPlayer.volume(25);  // Set volume (0-30)
+    dfPlayerReady = true;
+  } else {
+    Serial.println("DFPlayer not found - continuing without audio.");
+    dfPlayerReady = false;
+  }
+}
 
 /**
  * Read distance from ultrasonic sensor
@@ -179,17 +240,37 @@ float readUltrasonic() {
   }
 
   // Calculate distance: speed of sound = 343 m/s = 0.0343 cm/us
-  // Distance = (duration * 0.0343) / 2
   float distance = duration * 0.0343 / 2;
-
   return distance;
 }
 
 /**
  * Play a track from the TF card
- * Track numbers correspond to files: 001.mp3, 002.mp3, etc.
  */
 void playTrack(int trackNum) {
-  dfPlayer.play(trackNum);
-  delay(500);  // Wait for playback to start
+  if (!dfPlayerReady) {
+    initDFPlayer();  // Try to reinitialize after sleep
+  }
+
+  if (dfPlayerReady) {
+    dfPlayer.play(trackNum);
+    delay(500);  // Wait for playback to start
+  }
+}
+
+/**
+ * Enter deep sleep mode to save power
+ * Wakes up after SLEEP_INTERVAL_US microseconds
+ */
+void goToSleep() {
+  Serial.println("Going to sleep...");
+  Serial.flush();
+
+  // Configure wake-up timer
+  esp_sleep_enable_timer_wakeup(SLEEP_INTERVAL_US);
+
+  // Enter deep sleep
+  esp_deep_sleep_start();
+
+  // Code never reaches here - device resets on wake
 }
