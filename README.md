@@ -169,22 +169,22 @@ Create folder structure:
 
 ## Power Saving / 省电模式
 
-The device uses **deep sleep** to maximize battery life:
+The device **always** uses deep sleep - wakes every 3 seconds, checks sensors, then goes back to sleep.
 
-| State | Power | Behavior |
-|-------|-------|----------|
-| Deep Sleep | ~10μA | Wakes every 3 seconds to check |
-| Active (no baby) | ~70mA | Quick check, then back to sleep |
-| Active (baby detected) | ~70mA | Continuous monitoring |
-
-**Estimated battery life with 4x AA:**
-- Without sleep: ~35-40 hours continuous
-- With sleep: **several weeks to months**
-
-To disable sleep mode for debugging, set in code:
-```cpp
-#define SLEEP_ENABLED false
 ```
+Sleep 3s → Wake → Check sensors → Sleep 3s → Wake → ...
+```
+
+| State | Duration | Power |
+|-------|----------|-------|
+| Deep Sleep | ~3 seconds | ~10μA |
+| Active check | ~100ms | ~70mA |
+
+**Average power:** ~1-2mA (mostly sleeping!)
+
+**Estimated battery life with 4x AA (2500mAh):**
+- Continuous run (no sleep): ~35 hours
+- With sleep: **2-3 months**
 
 ## Configuration / 配置调整
 
@@ -192,9 +192,15 @@ Key parameters in the code you may need to adjust:
 
 ```cpp
 #define ULTRASONIC_THRESHOLD_CM 30    // Detection distance (cm)
-#define HALL_THRESHOLD 2000           // Hall sensor threshold (test and adjust)
-#define BUCKLE_REMINDER_DELAY_MS 30000  // Reminder delay (30 seconds)
+#define HALL_THRESHOLD 2000           // Hall sensor threshold (test and adjust!)
 #define SLEEP_INTERVAL_US 3000000     // Sleep interval (3 seconds)
+#define REMINDER_CYCLES 10            // 10 × 3s = 30 second reminder delay
+```
+
+### Debug Mode
+Set `DEBUG_MODE` to `false` in production to save a bit more power:
+```cpp
+#define DEBUG_MODE false
 ```
 
 ## Future Enhancements / 未来扩展
