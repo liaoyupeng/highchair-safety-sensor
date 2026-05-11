@@ -29,6 +29,25 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 - 电池电量低于4.6V时播放提醒
 - 每约10分钟重复提醒一次
 
+### 4. Night Mode / 夜间模式
+- Automatically disables detection during sleep hours (10pm - 7am)
+- Uses DS3231 RTC module to keep accurate time
+- During night mode, sleeps for 1 hour between checks (instead of 3 seconds)
+- Saves battery by skipping unnecessary checks at night
+- 夜间自动关闭检测（晚上10点到早上7点）
+- 使用 DS3231 实时时钟模块保持准确时间
+- 夜间模式下每小时唤醒一次（而不是3秒），更省电
+
+### 5. Flash Logging / 内置日志存储
+- Logs are saved to ESP32's internal flash (LittleFS)
+- Each log entry includes timestamp from RTC
+- On fresh boot (USB reconnect), saved logs are printed to Serial
+- Max log size: ~50KB (auto-clears when full)
+- 日志保存到 ESP32 内置 Flash（LittleFS）
+- 每条日志带 RTC 时间戳
+- 重新插 USB 时自动打印之前保存的日志
+- 最大约 50KB，满了自动清空
+
 ## Hardware / 硬件清单
 
 | Component | Model | Quantity | Notes |
@@ -36,6 +55,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 | Microcontroller | ESP32-C3 Supermini | 1 | 22x18mm, WiFi/BLE |
 | Ultrasonic Sensor | HC-SR04 | 1 | 2cm-450cm range |
 | Hall Effect Sensor | 49E (Linear) or KY-035 | 1 | Analog output |
+| RTC Module | DS3231 | 1 | For night mode timing |
 | MP3 Player | DFPlayer Mini | 1 | TF card slot |
 | Speaker | 8Ω 2-3W | 1 | Small speaker |
 | Battery Holder | 4x AA | 1 | 6V output (regulated to 3.3V) |
@@ -66,6 +86,10 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
     DFPlayer VCC ───┤ 3.3V            │
     DFPlayer RX ────┤ GPIO21 (TX)     │
     DFPlayer TX ────┤ GPIO20 (RX)     │
+                    │                 │
+    DS3231 VCC ─────┤ 3.3V            │
+    DS3231 SDA ─────┤ GPIO8           │
+    DS3231 SCL ─────┤ GPIO9           │
                     │                 │
                     └─────────────────┘
 
@@ -117,6 +141,16 @@ Note: If using KY-035 module, connect AO (Analog Out) to GPIO1.
 | SPK1 | Speaker + |
 | SPK2 | Speaker - |
 
+#### DS3231 RTC Module / 实时时钟模块
+| DS3231 Pin | ESP32 Pin |
+|------------|-----------|
+| VCC | 3.3V |
+| GND | GND |
+| SDA | GPIO8 |
+| SCL | GPIO9 |
+
+Note: DS3231 has a built-in CR2032 battery holder to keep time when main power is off.
+
 ## Installation / 安装
 
 ### 1. Prepare TF Card / 准备 TF 卡
@@ -137,8 +171,35 @@ Create folder structure:
 ### 3. Upload Code / 上传代码
 1. Install Arduino IDE
 2. Add ESP32 board support
-3. Install DFRobotDFPlayerMini library
+3. Install libraries:
+   - DFRobotDFPlayerMini
+   - RTClib (by Adafruit)
 4. Upload `highchair_sensor.ino`
+
+### 4. Set RTC Time (First Time Only) / 设置时钟（仅首次）
+Upload this sketch once to set the RTC time, then upload the main code:
+```cpp
+#include <RTClib.h>
+#include <Wire.h>
+
+RTC_DS3231 rtc;
+
+void setup() {
+  Wire.begin(8, 9);  // SDA=GPIO8, SCL=GPIO9
+  rtc.begin();
+
+  // Set time to compile time (run immediately after compiling!)
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
+  // Or set manually: rtc.adjust(DateTime(2026, 5, 11, 20, 30, 0));
+
+  Serial.begin(115200);
+  Serial.println("RTC time set!");
+}
+
+void loop() {}
+```
+After setting, the CR2032 battery on DS3231 will keep the time.
 
 ## Logic Flow / 逻辑流程
 
@@ -153,11 +214,22 @@ The device always sleeps, waking every 3 seconds to check:
                            │
                            ▼
               ┌────────────────────────┐
+              │ Night mode?            │
+              │ (10pm - 7am)           │
+              └────────────────────────┘
+                    │           │
+                   Yes          No
+                    │           │
+                    ▼           ▼
+              Go to sleep   Continue
+                           │
+                           ▼
+              ┌────────────────────────┐
               │ Check ultrasonic       │
               │ Baby detected?         │
               └────────────────────────┘
                     │           │
-                   Yes          No ──→ Reset counters
+                   Yes          No ──→ Reset counters (after 3× no detection)
                     │                        │
                     ▼                        │
          ┌──────────────────┐               │
@@ -228,20 +300,35 @@ Key parameters in the code you may need to adjust:
 #define HALL_THRESHOLD 2000           // Hall sensor threshold (test and adjust!)
 #define SLEEP_INTERVAL_US 3000000     // Sleep interval (3 seconds)
 #define REMINDER_CYCLES 10            // 10 × 3s = 30 second reminder delay
+#define CONFIRM_DETECTION 1           // 1 cycle (3s) to confirm baby seated
+#define CONFIRM_NO_DETECTION 3        // 3 cycles (9s) to confirm baby left
 #define BATTERY_LOW_VOLTAGE 4.6       // Low battery threshold (volts)
 #define BATTERY_WARN_CYCLES 200       // Warn every 200 cycles (~10 minutes)
+
+// Night mode settings
+#define NIGHT_MODE_ENABLED true       // Set to false to disable
+#define NIGHT_START_HOUR 22           // 10:00 PM
+#define NIGHT_END_HOUR 7              // 7:00 AM
+#define NIGHT_SLEEP_INTERVAL_US 3600000000ULL  // 1 hour sleep during night
+
+// Flash logging settings
+#define FLASH_LOG_ENABLED true        // Set to false to disable
+#define MAX_LOG_SIZE 50000            // Max log file size (~50KB)
 ```
 
 ### Debug Mode
 Set `DEBUG_MODE` to `false` in production to save a bit more power:
 ```cpp
 #define DEBUG_MODE false
+#define FLASH_LOG_ENABLED false       // Also disable flash logging
 ```
 
 ## Future Enhancements / 未来扩展
 
 - [ ] WiFi notifications to smartphone
 - [x] ~~Battery level monitoring~~ (已实现)
+- [x] ~~Night mode auto on/off~~ (已实现)
+- [x] ~~Flash logging~~ (已实现)
 - [ ] Adjustable detection distance via web interface
 - [ ] Multiple language support
 

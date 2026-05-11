@@ -6,11 +6,13 @@
  * - HC-SR04 Ultrasonic Sensor
  * - 49E Linear Hall Effect Sensor
  * - DFPlayer Mini + Speaker
- * - Voltage divider for battery monitoring (10K + 10K)
+ * - DS3231 RTC Module (for night mode)
+ * - Voltage divider for battery monitoring (100K + 100K)
  *
  * Power Saving:
  * - Always uses deep sleep, wakes every 3 seconds to check
  * - Uses wake cycle counting for 30-second timer
+ * - Night mode: skips detection between 10pm - 7am
  * - Extremely low average power consumption
  *
  * Author: Yupeng Liao
@@ -19,6 +21,9 @@
 
 #include <HardwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
+#include <RTClib.h>
+#include <Wire.h>
+#include <LittleFS.h>
 #include "esp_sleep.h"
 
 // ==================== Pin Definitions ====================
@@ -28,6 +33,8 @@
 #define BATTERY_PIN 0   // Battery voltage (ADC) - via voltage divider
 #define DFPLAYER_RX 20  // ESP32 RX <- DFPlayer TX
 #define DFPLAYER_TX 21  // ESP32 TX -> DFPlayer RX
+#define I2C_SDA 8       // DS3231 SDA
+#define I2C_SCL 9       // DS3231 SCL
 
 // ==================== Configuration ====================
 #define ULTRASONIC_THRESHOLD_CM 30    // Distance to detect baby
@@ -48,8 +55,19 @@
 #define TRACK_REMINDER 2      // 002.mp3 - Buckle reminder
 #define TRACK_LOW_BATTERY 3   // 003.mp3 - Low battery warning
 
+// Night mode - skip detection during sleep hours
+#define NIGHT_MODE_ENABLED true
+#define NIGHT_START_HOUR 22   // 10:00 PM
+#define NIGHT_END_HOUR 7      // 7:00 AM
+#define NIGHT_SLEEP_INTERVAL_US 3600000000ULL  // 1 hour (in microseconds)
+
 // Debug mode - set to false to disable Serial output
 #define DEBUG_MODE true
+
+// Flash logging - saves logs to internal flash, read via Serial on fresh boot
+#define FLASH_LOG_ENABLED true
+#define LOG_FILE "/log.txt"
+#define MAX_LOG_SIZE 50000    // Max log file size in bytes (~50KB)
 
 // ==================== RTC Memory (persists across sleep) ====================
 RTC_DATA_ATTR bool babyDetected = false;
@@ -61,12 +79,13 @@ RTC_DATA_ATTR int batteryCheckCount = 0;     // Counter for battery warning inte
 RTC_DATA_ATTR bool lowBatteryWarned = false; // Prevent repeated warnings
 
 // Thresholds for confirming state changes
-#define CONFIRM_DETECTION 2       // 2 cycles to confirm baby
-#define CONFIRM_NO_DETECTION 2    // 2 cycles to confirm baby left
+#define CONFIRM_DETECTION 1       // 1 cycle to confirm baby (immediate)
+#define CONFIRM_NO_DETECTION 3    // 3 cycles to confirm baby left
 
 // ==================== Global Variables ====================
 HardwareSerial dfPlayerSerial(1);
 DFRobotDFPlayerMini dfPlayer;
+RTC_DS3231 rtc;
 
 // ==================== Setup ====================
 void setup() {
@@ -75,16 +94,30 @@ void setup() {
     delay(100);
   }
 
+  // Initialize LittleFS for flash logging
+  if (FLASH_LOG_ENABLED) {
+    if (!LittleFS.begin(true)) {  // true = format if mount fails
+      Serial.println("LittleFS mount failed!");
+    }
+  }
+
   // Initialize pins
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(HALL_PIN, INPUT);
   pinMode(BATTERY_PIN, INPUT);
 
+  // Initialize I2C for RTC
+  Wire.begin(I2C_SDA, I2C_SCL);
+
   // Check wake reason
   esp_sleep_wakeup_cause_t reason = esp_sleep_get_wakeup_cause();
   if (reason != ESP_SLEEP_WAKEUP_TIMER) {
     // Fresh boot - reset all state
+    // Print existing logs first (if connected to USB)
+    if (DEBUG_MODE && FLASH_LOG_ENABLED) {
+      printLogs();
+    }
     debugPrint("Fresh boot - initializing");
     babyDetected = false;
     buckleLooseCount = 0;
@@ -95,6 +128,13 @@ void setup() {
     lowBatteryWarned = false;
   } else {
     debugPrint("Woke from sleep");
+  }
+
+  // Check night mode first - skip everything if in night hours
+  if (NIGHT_MODE_ENABLED && isNightMode()) {
+    debugPrint("Night mode - sleeping for 1 hour");
+    goToSleep(NIGHT_SLEEP_INTERVAL_US);
+    return;
   }
 
   // Check battery level
@@ -206,6 +246,25 @@ void checkSensors() {
 
 // ==================== Helper Functions ====================
 
+bool isNightMode() {
+  if (!rtc.begin()) {
+    debugPrint("RTC not found - night mode disabled");
+    return false;
+  }
+
+  DateTime now = rtc.now();
+  int hour = now.hour();
+
+  debugPrint("Current time: " + String(hour) + ":" + String(now.minute()));
+
+  // Night mode: 22:00 (10pm) to 7:00 (7am)
+  // This means: hour >= 22 OR hour < 7
+  if (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) {
+    return true;
+  }
+  return false;
+}
+
 float readUltrasonic() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -235,16 +294,72 @@ void playTrack(int track) {
   }
 }
 
-void goToSleep() {
-  debugPrint("Sleeping...\n");
+void goToSleep(uint64_t sleepUs = SLEEP_INTERVAL_US) {
+  debugPrint("Sleeping for " + String((uint32_t)(sleepUs / 1000000)) + " seconds...\n");
   if (DEBUG_MODE) Serial.flush();
 
-  esp_sleep_enable_timer_wakeup(SLEEP_INTERVAL_US);
+  esp_sleep_enable_timer_wakeup(sleepUs);
   esp_deep_sleep_start();
 }
 
 void debugPrint(String msg) {
-  if (DEBUG_MODE) {
-    Serial.println(msg);
+  // Add timestamp if RTC is available
+  String logLine = "";
+  if (rtc.begin()) {
+    DateTime now = rtc.now();
+    char timestamp[20];
+    sprintf(timestamp, "[%02d:%02d:%02d] ", now.hour(), now.minute(), now.second());
+    logLine = String(timestamp) + msg;
+  } else {
+    logLine = msg;
   }
+
+  // Print to Serial if connected
+  if (DEBUG_MODE) {
+    Serial.println(logLine);
+  }
+
+  // Write to flash
+  if (FLASH_LOG_ENABLED) {
+    logToFlash(logLine);
+  }
+}
+
+void logToFlash(String msg) {
+  // Check file size, clear if too large
+  File f = LittleFS.open(LOG_FILE, "r");
+  if (f) {
+    if (f.size() > MAX_LOG_SIZE) {
+      f.close();
+      LittleFS.remove(LOG_FILE);
+    } else {
+      f.close();
+    }
+  }
+
+  // Append to log file
+  f = LittleFS.open(LOG_FILE, "a");
+  if (f) {
+    f.println(msg);
+    f.close();
+  }
+}
+
+void printLogs() {
+  Serial.println("\n========== SAVED LOGS ==========");
+  File f = LittleFS.open(LOG_FILE, "r");
+  if (f) {
+    while (f.available()) {
+      Serial.write(f.read());
+    }
+    f.close();
+    Serial.println("========== END OF LOGS ==========\n");
+  } else {
+    Serial.println("No logs found.");
+  }
+}
+
+void clearLogs() {
+  LittleFS.remove(LOG_FILE);
+  Serial.println("Logs cleared.");
 }
