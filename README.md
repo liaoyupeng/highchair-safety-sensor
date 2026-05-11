@@ -30,7 +30,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 | Hall Effect Sensor | 49E (Linear) or KY-035 | 1 | Analog output |
 | MP3 Player | DFPlayer Mini | 1 | TF card slot |
 | Speaker | 8Ω 2-3W | 1 | Small speaker |
-| Battery Holder | 3x AA | 1 | 4.5V output |
+| Battery Holder | 4x AA | 1 | 6V output (regulated to 3.3V) |
 | Magnet | Neodymium (small) | 1 | Attach to buckle |
 | Jumper Wires | Dupont F-F | Several | For connections |
 | TF Card | Any | 1 | Store MP3 files |
@@ -66,7 +66,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 ### Wiring Details / 接线说明
 
 #### Power / 电源
-- 3x AA batteries (4.5V) → ESP32 5V pin
+- 4x AA batteries (6V) → ESP32 5V pin
 - ESP32 provides regulated 3.3V for sensors
 
 #### HC-SR04 Ultrasonic Sensor / 超声波传感器
@@ -120,51 +120,62 @@ Create folder structure:
 
 ## Logic Flow / 逻辑流程
 
+The device always sleeps, waking every 3 seconds to check:
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      Main Loop                          │
+│                    Deep Sleep (3s)                       │
 └─────────────────────────────────────────────────────────┘
+                           │
+                      Wake up
                            │
                            ▼
               ┌────────────────────────┐
-              │ Ultrasonic detects     │
-              │ baby's feet?           │
+              │ Check ultrasonic       │
+              │ Baby detected?         │
               └────────────────────────┘
                     │           │
-                   Yes          No
-                    │           │
-                    ▼           │
-         ┌──────────────────┐   │
-         │ Play welcome     │   │
-         │ music (001.mp3)  │   │
-         └──────────────────┘   │
-                    │           │
-                    ▼           │
-              ┌────────────────────────┐
-              │ Hall sensor detects    │
-              │ magnet? (buckle loose) │
-              └────────────────────────┘
-                    │           │
-                   Yes          No
-                    │           │
-                    ▼           ▼
-         ┌──────────────────┐  ┌──────────────────┐
-         │ Start 30s timer  │  │ Buckle fastened  │
-         └──────────────────┘  │ - All good!      │
-                    │          └──────────────────┘
-                    ▼
-              ┌────────────────────────┐
-              │ 30 seconds passed &    │
-              │ still detecting magnet?│
-              └────────────────────────┘
-                    │           │
-                   Yes          No
-                    │           │
-                    ▼           ▼
-         ┌──────────────────┐  ┌──────────────────┐
-         │ Play reminder    │  │ Timer cancelled  │
-         │ (002.mp3)        │  │ (buckle fastened)│
-         └──────────────────┘  └──────────────────┘
+                   Yes          No ──→ Reset counters
+                    │                        │
+                    ▼                        │
+         ┌──────────────────┐               │
+         │ First detection? │               │
+         │ → Play welcome   │               │
+         └──────────────────┘               │
+                    │                        │
+                    ▼                        │
+              ┌────────────────────────┐    │
+              │ Check hall sensor      │    │
+              │ Buckle loose?          │    │
+              └────────────────────────┘    │
+                    │           │           │
+                   Yes          No          │
+                    │           │           │
+                    ▼           ▼           │
+         ┌──────────────┐  ┌──────────────┐│
+         │ looseCount++ │  │ looseCount=0 ││
+         └──────────────┘  └──────────────┘│
+                    │                       │
+                    ▼                       │
+         ┌──────────────────┐              │
+         │ looseCount >= 10?│              │
+         │ (30 seconds)     │              │
+         └──────────────────┘              │
+              │         │                   │
+             Yes        No                  │
+              │         │                   │
+              ▼         └───────────────────┤
+         ┌──────────────┐                   │
+         │ Play reminder│                   │
+         │ looseCount=0 │                   │
+         └──────────────┘                   │
+                    │                       │
+                    └───────────────────────┤
+                                            │
+                                            ▼
+                              ┌────────────────────────┐
+                              │   Go back to sleep     │
+                              └────────────────────────┘
 ```
 
 ## Power Saving / 省电模式
