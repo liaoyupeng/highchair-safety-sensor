@@ -21,6 +21,14 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 - 装置放在座椅底下
 - 如果安全带没系上（检测到磁场），30秒后播放语音提醒
 
+### 3. Battery Monitoring / 电池电量监测
+- Monitors battery voltage via voltage divider
+- Plays warning audio when battery is low (<4.6V)
+- Warning repeats every ~10 minutes while battery is low
+- 通过分压电路监测电池电压
+- 电池电量低于4.6V时播放提醒
+- 每约10分钟重复提醒一次
+
 ## Hardware / 硬件清单
 
 | Component | Model | Quantity | Notes |
@@ -31,6 +39,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 | MP3 Player | DFPlayer Mini | 1 | TF card slot |
 | Speaker | 8Ω 2-3W | 1 | Small speaker |
 | Battery Holder | 4x AA | 1 | 6V output (regulated to 3.3V) |
+| Resistors | 10KΩ | 2 | For battery voltage divider |
 | Magnet | Neodymium (small) | 1 | Attach to buckle |
 | Jumper Wires | Dupont F-F | Several | For connections |
 | TF Card | Any | 1 | Store MP3 files |
@@ -69,6 +78,17 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 - 4x AA batteries (6V) → ESP32 5V pin
 - ESP32 provides regulated 3.3V for sensors
 
+#### Battery Voltage Monitor / 电池电压监测
+Uses a voltage divider to measure battery voltage:
+```
+Battery+ (6V) ─── [10KΩ] ───┬─── GPIO0 (ADC)
+                            │
+                         [10KΩ]
+                            │
+Battery- (GND) ─────────────┴─── GND
+```
+This divides voltage by 2, so 6V battery → 3V at ADC (safe for 3.3V input).
+
 #### HC-SR04 Ultrasonic Sensor / 超声波传感器
 | HC-SR04 Pin | ESP32 Pin |
 |-------------|-----------|
@@ -103,7 +123,8 @@ Create folder structure:
 ```
 /01/
     001.mp3  - Welcome music (宝宝坐好啦)
-    002.mp3  - Reminder (请给宝宝系上安全带)
+    002.mp3  - Buckle reminder (请给宝宝系上安全带)
+    003.mp3  - Low battery warning (电池电量不足，请及时更换)
 ```
 
 ### 2. Physical Installation / 物理安装
@@ -206,6 +227,8 @@ Key parameters in the code you may need to adjust:
 #define HALL_THRESHOLD 2000           // Hall sensor threshold (test and adjust!)
 #define SLEEP_INTERVAL_US 3000000     // Sleep interval (3 seconds)
 #define REMINDER_CYCLES 10            // 10 × 3s = 30 second reminder delay
+#define BATTERY_LOW_VOLTAGE 4.6       // Low battery threshold (volts)
+#define BATTERY_WARN_CYCLES 200       // Warn every 200 cycles (~10 minutes)
 ```
 
 ### Debug Mode
@@ -217,7 +240,7 @@ Set `DEBUG_MODE` to `false` in production to save a bit more power:
 ## Future Enhancements / 未来扩展
 
 - [ ] WiFi notifications to smartphone
-- [ ] Battery level monitoring
+- [x] ~~Battery level monitoring~~ (已实现)
 - [ ] Adjustable detection distance via web interface
 - [ ] Multiple language support
 

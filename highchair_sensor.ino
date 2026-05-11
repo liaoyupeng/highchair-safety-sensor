@@ -6,6 +6,7 @@
  * - HC-SR04 Ultrasonic Sensor
  * - 49E Linear Hall Effect Sensor
  * - DFPlayer Mini + Speaker
+ * - Voltage divider for battery monitoring (10K + 10K)
  *
  * Power Saving:
  * - Always uses deep sleep, wakes every 3 seconds to check
@@ -24,6 +25,7 @@
 #define TRIG_PIN 2      // Ultrasonic Trig
 #define ECHO_PIN 3      // Ultrasonic Echo
 #define HALL_PIN 1      // Hall sensor (ADC)
+#define BATTERY_PIN 0   // Battery voltage (ADC) - via voltage divider
 #define DFPLAYER_RX 20  // ESP32 RX <- DFPlayer TX
 #define DFPLAYER_TX 21  // ESP32 TX -> DFPlayer RX
 
@@ -33,9 +35,18 @@
 #define SLEEP_INTERVAL_US 3000000     // 3 seconds between checks
 #define REMINDER_CYCLES 10            // 10 cycles × 3s = 30 seconds
 
-// Audio tracks (on TF card: /01/001.mp3, /01/002.mp3)
-#define TRACK_WELCOME 1
-#define TRACK_REMINDER 2
+// Battery monitoring
+// Using voltage divider: 10K + 10K, so Vout = Vin / 2
+// 4x AA full = 6.4V → ADC sees 3.2V
+// 4x AA low = 4.4V → ADC sees 2.2V
+#define BATTERY_DIVIDER_RATIO 2.0     // Voltage divider ratio (R1+R2)/R2
+#define BATTERY_LOW_VOLTAGE 4.6       // Low battery threshold (volts)
+#define BATTERY_WARN_CYCLES 200       // Warn every 200 cycles (~10 minutes)
+
+// Audio tracks (on TF card: /01/001.mp3, /01/002.mp3, /01/003.mp3)
+#define TRACK_WELCOME 1       // 001.mp3 - Welcome music
+#define TRACK_REMINDER 2      // 002.mp3 - Buckle reminder
+#define TRACK_LOW_BATTERY 3   // 003.mp3 - Low battery warning
 
 // Debug mode - set to false to disable Serial output
 #define DEBUG_MODE true
@@ -46,6 +57,8 @@ RTC_DATA_ATTR int buckleLooseCount = 0;      // Counts cycles with loose buckle
 RTC_DATA_ATTR int detectionCount = 0;        // Counts consecutive baby detections
 RTC_DATA_ATTR int noDetectionCount = 0;      // Counts consecutive no-detections
 RTC_DATA_ATTR bool welcomePlayed = false;
+RTC_DATA_ATTR int batteryCheckCount = 0;     // Counter for battery warning interval
+RTC_DATA_ATTR bool lowBatteryWarned = false; // Prevent repeated warnings
 
 // Thresholds for confirming state changes
 #define CONFIRM_DETECTION 2       // 2 cycles to confirm baby
@@ -66,6 +79,7 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(HALL_PIN, INPUT);
+  pinMode(BATTERY_PIN, INPUT);
 
   // Check wake reason
   esp_sleep_wakeup_cause_t reason = esp_sleep_get_wakeup_cause();
@@ -77,9 +91,14 @@ void setup() {
     detectionCount = 0;
     noDetectionCount = 0;
     welcomePlayed = false;
+    batteryCheckCount = 0;
+    lowBatteryWarned = false;
   } else {
     debugPrint("Woke from sleep");
   }
+
+  // Check battery level
+  checkBattery();
 
   // Main detection logic
   checkSensors();
@@ -90,6 +109,35 @@ void setup() {
 
 void loop() {
   // Never reaches here - device sleeps after setup()
+}
+
+// ==================== Battery Monitoring ====================
+void checkBattery() {
+  // Read battery voltage via ADC
+  int adcValue = analogRead(BATTERY_PIN);
+
+  // ESP32-C3 ADC: 12-bit (0-4095), reference 3.3V
+  float adcVoltage = (adcValue / 4095.0) * 3.3;
+  float batteryVoltage = adcVoltage * BATTERY_DIVIDER_RATIO;
+
+  debugPrint("Battery: " + String(batteryVoltage, 2) + "V (ADC: " + String(adcValue) + ")");
+
+  // Check if battery is low
+  if (batteryVoltage < BATTERY_LOW_VOLTAGE && batteryVoltage > 1.0) {  // >1.0 to ignore no-battery
+    batteryCheckCount++;
+
+    // Warn every BATTERY_WARN_CYCLES (~10 minutes) or on first detection
+    if (!lowBatteryWarned || batteryCheckCount >= BATTERY_WARN_CYCLES) {
+      debugPrint("Low battery warning!");
+      playTrack(TRACK_LOW_BATTERY);
+      lowBatteryWarned = true;
+      batteryCheckCount = 0;
+    }
+  } else {
+    // Battery OK - reset warning flag
+    lowBatteryWarned = false;
+    batteryCheckCount = 0;
+  }
 }
 
 // ==================== Main Logic ====================
