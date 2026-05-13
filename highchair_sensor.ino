@@ -56,7 +56,7 @@
 #define TRACK_LOW_BATTERY 3   // 003.mp3 - Low battery warning
 
 // Night mode - skip detection during sleep hours
-#define NIGHT_MODE_ENABLED true
+#define NIGHT_MODE_ENABLED false
 #define NIGHT_START_HOUR 22   // 10:00 PM
 #define NIGHT_END_HOUR 7      // 7:00 AM
 #define NIGHT_SLEEP_INTERVAL_US 3600000000ULL  // 1 hour (in microseconds)
