@@ -119,10 +119,7 @@ void setup() {
   delay(2000);  // DFPlayer needs ~2s after power on
   if (dfPlayer.begin(dfPlayerSerial, /*isACK=*/false, /*doReset=*/true)) {
     dfPlayer.volume(25);
-    delay(500);
-    debugPrint("DFPlayer OK - testing track 2...");
-    dfPlayer.playFolder(1, 2);
-    delay(3000);
+    debugPrint("DFPlayer OK");
   } else {
     debugPrint("DFPlayer not found!");
   }
