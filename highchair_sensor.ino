@@ -69,6 +69,9 @@
 #define LOG_FILE "/log.txt"
 #define MAX_LOG_SIZE 50000    // Max log file size in bytes (~50KB)
 
+// ==================== Forward Declarations ====================
+void goToSleep(uint64_t sleepUs = SLEEP_INTERVAL_US);
+
 // ==================== RTC Memory (persists across sleep) ====================
 RTC_DATA_ATTR bool babyDetected = false;
 RTC_DATA_ATTR int buckleLooseCount = 0;      // Counts cycles with loose buckle
