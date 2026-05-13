@@ -37,7 +37,7 @@
 #define I2C_SCL 9       // DS3231 SCL
 
 // ==================== Configuration ====================
-#define ULTRASONIC_THRESHOLD_CM 30    // Distance to detect baby
+#define ULTRASONIC_THRESHOLD_CM 15    // Distance to detect baby (cm)
 #define HALL_THRESHOLD 2000           // Hall sensor threshold (adjust!)
 #define SLEEP_INTERVAL_US 3000000     // 3 seconds between checks
 #define REMINDER_CYCLES 10            // 10 cycles × 3s = 30 seconds
