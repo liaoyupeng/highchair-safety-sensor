@@ -60,6 +60,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
 | Speaker | 8Ω 2-3W | 1 | Small speaker |
 | Battery Holder | 4x AA | 1 | 6V output (regulated to 3.3V) |
 | Resistors | 100KΩ | 2 | For battery voltage divider (low power) |
+| Resistor | 1KΩ | 1 | For DFPlayer RX line |
 | Magnet | Neodymium (small) | 1 | Attach to buckle |
 | Jumper Wires | Dupont F-F | Several | For connections |
 | TF Card | Any | 1 | Store MP3 files |
@@ -84,7 +85,7 @@ A smart sensor system that reminds parents to buckle up their baby when seated i
     49E OUT ────────┤ GPIO1 (ADC)     │
                     │                 │
     DFPlayer VCC ───┤ 3.3V            │
-    DFPlayer RX ────┤ GPIO21 (TX)     │
+    DFPlayer RX ─┤1KΩ├─┤ GPIO21 (TX)     │
     DFPlayer TX ────┤ GPIO20 (RX)     │
                     │                 │
     DS3231 VCC ─────┤ 3.3V            │
@@ -136,7 +137,7 @@ Note: If using KY-035 module, connect AO (Analog Out) to GPIO1.
 |--------------|-----------|
 | VCC | 3.3V |
 | GND | GND |
-| RX | GPIO21 (ESP TX) |
+| RX | GPIO21 (ESP TX) via 1KΩ resistor |
 | TX | GPIO20 (ESP RX) |
 | SPK1 | Speaker + |
 | SPK2 | Speaker - |
@@ -154,12 +155,12 @@ Note: DS3231 has a built-in CR2032 battery holder to keep time when main power i
 ## Installation / 安装
 
 ### 1. Prepare TF Card / 准备 TF 卡
-Create folder structure:
+Format TF card as **FAT32 with MBR** partition table. Create folder structure:
 ```
 /01/
-    001.mp3  - Welcome music (宝宝坐好啦)
-    002.mp3  - Buckle reminder (请给宝宝系上安全带)
-    003.mp3  - Low battery warning (电池电量不足，请及时更换)
+    001.mp3  - Welcome music (宝宝坐下了，请系好安全带)
+    002.mp3  - Buckle reminder (请给宝宝系好安全带)
+    003.mp3  - Low battery warning (电池电量低，请更换电池)
 ```
 
 ### 2. Physical Installation / 物理安装
@@ -296,7 +297,7 @@ Sleep 3s → Wake → Check sensors → Sleep 3s → Wake → ...
 Key parameters in the code you may need to adjust:
 
 ```cpp
-#define ULTRASONIC_THRESHOLD_CM 30    // Detection distance (cm)
+#define ULTRASONIC_THRESHOLD_CM 15    // Detection distance (cm)
 #define HALL_THRESHOLD 2000           // Hall sensor threshold (test and adjust!)
 #define SLEEP_INTERVAL_US 3000000     // Sleep interval (3 seconds)
 #define REMINDER_CYCLES 10            // 10 × 3s = 30 second reminder delay
@@ -321,6 +322,12 @@ Set `DEBUG_MODE` to `false` in production to save a bit more power:
 ```cpp
 #define DEBUG_MODE false
 #define FLASH_LOG_ENABLED false       // Also disable flash logging
+```
+
+### No Deep Sleep Mode / 无深睡眠调试模式
+Enable `NO_DEEP_SLEEP` to keep Serial Monitor connected during debugging. In this mode, the device uses `delay()` instead of deep sleep, so logs print continuously:
+```cpp
+#define NO_DEEP_SLEEP true            // Uses delay() loop instead of deep sleep
 ```
 
 ## Future Enhancements / 未来扩展
