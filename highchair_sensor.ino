@@ -64,6 +64,10 @@
 // Debug mode - set to false to disable Serial output
 #define DEBUG_MODE true
 
+// No deep sleep mode - uses delay() loop instead of deep sleep for debugging
+// Set to true when connected to Serial monitor to see continuous output
+#define NO_DEEP_SLEEP false
+
 // Flash logging - saves logs to internal flash, read via Serial on fresh boot
 #define FLASH_LOG_ENABLED true
 #define LOG_FILE "/log.txt"
@@ -135,9 +139,15 @@ void setup() {
 
   // Check night mode first - skip everything if in night hours
   if (NIGHT_MODE_ENABLED && isNightMode()) {
-    debugPrint("Night mode - sleeping for 1 hour");
-    goToSleep(NIGHT_SLEEP_INTERVAL_US);
-    return;
+    if (NO_DEEP_SLEEP) {
+      debugPrint("Night mode - waiting 1 hour...");
+      delay(3600000);
+      return;
+    } else {
+      debugPrint("Night mode - sleeping for 1 hour");
+      goToSleep(NIGHT_SLEEP_INTERVAL_US);
+      return;
+    }
   }
 
   // Check battery level
@@ -146,12 +156,30 @@ void setup() {
   // Main detection logic
   checkSensors();
 
-  // Go back to sleep
-  goToSleep();
+  // Go back to sleep or loop
+  if (NO_DEEP_SLEEP) {
+    debugPrint("No-sleep mode - waiting 3 seconds...\n");
+    delay(3000);
+  } else {
+    goToSleep();
+  }
 }
 
 void loop() {
-  // Never reaches here - device sleeps after setup()
+  // In NO_DEEP_SLEEP mode, loop runs continuously
+  if (!NO_DEEP_SLEEP) return;
+
+  // Check night mode
+  if (NIGHT_MODE_ENABLED && isNightMode()) {
+    debugPrint("Night mode - waiting 1 hour...");
+    delay(3600000);
+    return;
+  }
+
+  checkBattery();
+  checkSensors();
+  debugPrint("No-sleep mode - waiting 3 seconds...\n");
+  delay(3000);
 }
 
 // ==================== Battery Monitoring ====================
