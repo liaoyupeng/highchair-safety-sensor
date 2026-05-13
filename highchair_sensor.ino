@@ -114,6 +114,16 @@ void setup() {
   pinMode(HALL_PIN, INPUT);
   pinMode(BATTERY_PIN, INPUT);
 
+  // Initialize DFPlayer
+  dfPlayerSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
+  delay(2000);  // DFPlayer needs ~2s after power on
+  if (dfPlayer.begin(dfPlayerSerial)) {
+    dfPlayer.volume(25);
+    debugPrint("DFPlayer OK");
+  } else {
+    debugPrint("DFPlayer not found!");
+  }
+
   // Initialize I2C for RTC
   Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -310,19 +320,9 @@ float readUltrasonic() {
 }
 
 void playTrack(int track) {
-  // Initialize DFPlayer
-  dfPlayerSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
-  delay(200);
-
-  if (dfPlayer.begin(dfPlayerSerial)) {
-    dfPlayer.volume(25);
-    delay(100);
-    dfPlayer.play(track);
-    delay(3000);  // Wait for audio to play
-    debugPrint("Track " + String(track) + " played");
-  } else {
-    debugPrint("DFPlayer not found!");
-  }
+  dfPlayer.play(track);
+  delay(3000);  // Wait for audio to play
+  debugPrint("Track " + String(track) + " played");
 }
 
 void goToSleep(uint64_t sleepUs) {
