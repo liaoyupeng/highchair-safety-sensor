@@ -66,7 +66,7 @@
 
 // No deep sleep mode - uses delay() loop instead of deep sleep for debugging
 // Set to true when connected to Serial monitor to see continuous output
-#define NO_DEEP_SLEEP false
+#define NO_DEEP_SLEEP true
 
 // Flash logging - saves logs to internal flash, read via Serial on fresh boot
 #define FLASH_LOG_ENABLED true
