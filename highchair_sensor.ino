@@ -217,7 +217,7 @@ void checkSensors() {
   float distance = readUltrasonic();
   bool detected = (distance > 0 && distance < ULTRASONIC_THRESHOLD_CM);
 
-  debugPrint("Distance: " + String(distance) + " cm");
+  debugPrint("Distance: " + String(distance) + " cm | Baby: " + String(babyDetected ? "YES" : "NO") + " | Det: " + String(detectionCount) + " NoDet: " + String(noDetectionCount));
 
   // ===== Baby detection state machine =====
   if (detected) {
