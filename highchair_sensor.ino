@@ -121,7 +121,7 @@ void setup() {
     dfPlayer.volume(25);
     delay(500);
     debugPrint("DFPlayer OK - testing track 2...");
-    dfPlayer.play(2);
+    dfPlayer.playFolder(1, 2);
     delay(3000);
   } else {
     debugPrint("DFPlayer not found!");
@@ -323,7 +323,7 @@ float readUltrasonic() {
 }
 
 void playTrack(int track) {
-  dfPlayer.play(track);
+  dfPlayer.playFolder(1, track);  // Play /01/00x.mp3 by filename
   delay(3000);  // Wait for audio to play
   debugPrint("Track " + String(track) + " played");
 }
