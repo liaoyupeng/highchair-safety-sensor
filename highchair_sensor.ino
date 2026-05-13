@@ -297,7 +297,7 @@ void playTrack(int track) {
   }
 }
 
-void goToSleep(uint64_t sleepUs = SLEEP_INTERVAL_US) {
+void goToSleep(uint64_t sleepUs) {
   debugPrint("Sleeping for " + String((uint32_t)(sleepUs / 1000000)) + " seconds...\n");
   if (DEBUG_MODE) Serial.flush();
 
